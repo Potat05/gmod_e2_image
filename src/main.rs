@@ -1,31 +1,53 @@
 
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, path::PathBuf};
 
 use base64::{engine::general_purpose, Engine};
 use image::EncodableLayout;
+use clap::{Parser, ValueEnum};
+
+
+
+#[derive(ValueEnum, Debug, Clone)]
+enum EncodingMethod {
+    BC1 = 4,
+    RGB888 = 5
+}
+
+// // TODO: Get this to work
+// #[derive(Args, Debug, Clone)]
+// struct Resize {
+//     width: u32,
+//     height: u32,
+// }
+
+/// Encode an image that gmod_e2_image.txt can decode in-game.
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+struct Command {
+
+    /// Image path to encode
+    img_path: PathBuf,
+
+    /// The image encoding method to use
+    #[arg(short, long, value_enum, default_value_t = EncodingMethod::BC1)]
+    encoding: EncodingMethod,
+
+    // /// Resize image
+    // #[arg(short, long)] 
+    // resize: Option<Resize>,
+
+}
+
+
 
 
 fn main() -> std::io::Result<()> {
 
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() != 5 {
-        println!("Usage:");
-        println!("gmod_e2_image.exe RESIZE_WIDTH RESIZE_HEIGHT FORMAT FILE_PATH");
-
-        return Ok(());
-    }
+    let cli = Command::parse();
 
 
 
-    let resize_width = &args[1].parse::<u32>().unwrap();
-    let resize_height = &args[2].parse::<u32>().unwrap();
-    let format = &args[3];
-    let filepath = &args[4];
-
-
-
-    let mut img = image::open(filepath).unwrap();
+    let img = image::open(cli.img_path).unwrap();
 
     if img.width() > 0xFFFF || img.height() > 0xFFFF {
         println!("Image is too big.");
@@ -35,14 +57,17 @@ fn main() -> std::io::Result<()> {
 
 
 
-    // I don't know what filtering method to use, I just use Lanczos3 because it sounds the most fancy.
-    img = img.resize(resize_width.to_owned(), resize_height.to_owned(), image::imageops::FilterType::Lanczos3);
+    // if Option::is_some(&cli.resize) {
+    //     let resize = cli.resize.unwrap();
+    //     // I don't know what filtering method to use, I just use Lanczos3 because it sounds the most fancy.
+    //     img = img.resize(resize.width, resize.height, image::imageops::FilterType::Lanczos3);
+    // }
     let rgba8888 = img.into_rgba8();
 
 
 
-    let encoded = (match format.as_str() {
-        "bc1" => {
+    let encoded = match cli.encoding {
+        EncodingMethod::BC1 => {
             let size = texpresso::Format::Bc1.compressed_size(rgba8888.width().try_into().unwrap(), rgba8888.height().try_into().unwrap());
             let mut buf = vec![0u8; size];
             texpresso::Format::Bc1.compress(
@@ -56,31 +81,20 @@ fn main() -> std::io::Result<()> {
                 },
                 &mut buf
             );
-            Ok(buf)
+            buf
         },
-        "rgb888" => {
+        EncodingMethod::RGB888 => {
             let buf = Vec::from(rgba8888.as_bytes());
-            Ok(buf)
-        }
-        _ => {
-            println!("Unknown format \"{}\"", format);
-            Err(())
+            buf
         },
-    }).unwrap();
+    };
 
     let header = vec![
         u8::from((rgba8888.width() & 0xFF) as u8),
         u8::from(((rgba8888.width() >> 8) & 0xFF) as u8),
         u8::from((rgba8888.height() & 0xFF) as u8),
         u8::from(((rgba8888.height() >> 8) & 0xFF) as u8),
-        (match format.as_str() {
-            "bc1" => Ok(4),
-            "rgb888" => Ok(5),
-            _ => {
-                println!("Unknown format \"{}\"", format);
-                Err(())
-            },
-        }).unwrap()
+        u8::from(cli.encoding as u8),
     ];
 
 
