@@ -76,6 +76,11 @@ struct Command {
     #[arg(short, long, value_enum, default_value_t = EncodingMethod::BC1)]
     encoding: EncodingMethod,
 
+    /// Downscale the image to fit the required bytes
+    /// (Keeps aspect ratio intact)
+    #[arg(short, long, default_value_t = 150_000)]
+    scale_to_bytes: usize,
+
 }
 
 
@@ -89,7 +94,7 @@ fn main() -> std::io::Result<()> {
 
     println!("Loading image {:?}", cli.img_path);
 
-    let img = image::open(cli.img_path).unwrap();
+    let mut img = image::open(cli.img_path).unwrap();
 
     if img.width() > 0xFFFF || img.height() > 0xFFFF {
         println!("Image is too big.");
@@ -99,8 +104,16 @@ fn main() -> std::io::Result<()> {
 
 
 
-    // // I don't know what filtering method to use, I just use Lanczos3 because it sounds the most fancy.
-    // img = img.resize(resize.width, resize.height, image::imageops::FilterType::Lanczos3);
+    let mut downscale: f64 = 1.0;
+    while cli.encoding.byte_size(((img.width() as f64) * downscale) as usize, ((img.height() as f64) * downscale) as usize) > cli.scale_to_bytes {
+        // TODO: Don't do it this way.
+        downscale -= 0.01;
+    }
+    if downscale != 1.0 {
+        println!("Downscaling image {}%", (downscale * 100.0) as u32);
+        // I don't know what filtering method to use, I just use Lanczos3 because it sounds the most fancy.
+        img = img.resize(((img.width() as f64) * downscale) as u32, ((img.height() as f64) * downscale) as u32, image::imageops::FilterType::Lanczos3);
+    }
 
 
 
@@ -118,6 +131,10 @@ fn main() -> std::io::Result<()> {
 
     let encoded = cli.encoding.encode(&img);
 
+    if encoded.len() > 150_000 {
+        println!("WARNING: Image stream is large, pasting into e2 may take a while.");
+    }
+
 
 
     let output_file: PathBuf = PathBuf::from("output.txt");
@@ -127,10 +144,6 @@ fn main() -> std::io::Result<()> {
     let mut file = File::create(output_file)?;
 
     let base64_stream = general_purpose::STANDARD.encode([ header, encoded ].concat());
-
-    if base64_stream.len() > 200_000 {
-        println!("WARNING: Image stream is large, pasting into e2 may take a while.");
-    }
 
     file.write_all(format!("Base64Stream = \"{}\"", base64_stream).as_bytes())?;
 
