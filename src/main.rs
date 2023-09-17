@@ -96,12 +96,6 @@ fn main() -> std::io::Result<()> {
 
     let mut img = image::open(cli.img_path).unwrap();
 
-    if img.width() > 0xFFFF || img.height() > 0xFFFF {
-        println!("Image is too big.");
-
-        return Ok(());
-    }
-
 
 
     let mut downscale: f64 = 1.0;
@@ -117,6 +111,14 @@ fn main() -> std::io::Result<()> {
 
 
 
+    if img.width() > 0xFFFF || img.height() > 0xFFFF {
+        println!("Image is too big.");
+
+        return Ok(());
+    }
+
+
+    
     let header = vec![
         u8::from((img.width() & 0xFF) as u8),
         u8::from(((img.width() >> 8) & 0xFF) as u8),
