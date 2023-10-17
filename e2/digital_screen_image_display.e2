@@ -1,0 +1,384 @@
+
+###################################################
+#         Gmod E2 Image Viewer - Potat05          #
+###################################################
+# Instructions on how to use this are here:       #
+# https://github.com/Potat05/gmod-e2-image-viewer #
+#                                                 #
+# Be careful loading large image data (>=250KiB)  #
+# as it may crash the game on lower end systems.  #
+#                                                 #
+# If you are a player and having issues loading   #
+# this, Set the "Speed" variable below to a lower #
+# value.                                          #
+#                                                 #
+# If you are hosting the server and having issues #
+# loading this you can use the console command    #
+# "wire_expression2_unlimited 1"                  #
+# to disable e2 ops limit.                        #
+#                                                 #
+# You may remove the e2 chip once the image is    #
+# done displaying.                                #
+###################################################
+
+
+
+
+
+@name Digital Screen Image Display
+@strict
+
+@inputs Screen:wirelink
+
+@persist Base64Stream:string Base64CharIndex:number Base64Charset:string Base64Stored:array
+@persist [Width, Height, Format, X, Y]:number
+@persist [Start, State, Speed]:number
+
+
+
+
+
+##########################
+# CHANGE BELOW VARIABLES #
+##########################
+
+
+
+# Speed multiplier for displaying the image.
+Speed = 5
+# TODO - Make speed logic less shit.
+
+if(first() || dupefinished()) {
+    
+    # IMAGE DATA
+    # you can either include it from a seperate file (recommended),
+    
+    #include "imagedata"
+    
+    # or just put it in this file.
+    
+    # Base64Stream = "AAAA" # Example empty image.
+    
+}
+
+
+
+##########################
+# CHANGE ABOVE VARIABLES #
+##########################
+
+
+
+
+
+##############
+# MISC STUFF #
+##############
+
+
+
+Width = 0
+Height = 0
+State = 0
+
+
+
+
+
+##################
+# DIGITAL SCREEN #
+##################
+
+
+
+if(first() || dupefinished()) {
+    if((State == 0) && (Screen != nowirelink())) {
+        State = 1
+    }
+}
+if((State == 0) && ~Screen && (Screen != nowirelink())) {
+    State = 1
+}
+
+
+
+function wirelink:dsReset() {
+    This[1048574] = 0 # Reset Screen and whatever was on it will be cleared.
+    This[1048569] = 2 # Set color mode to 3
+    This[1048575] = 1 # Apply changes
+    # Set resolution
+    This[1048572] = Width
+    This[1048573] = Height
+}
+
+function wirelink:dsSet(X:number, Y:number, Col:vector) {
+    # TODO: Is there a way to write to mipmaps?
+    This[X * Height + Y] = rgb2digi(Col, 2)
+    # This[X + Y * Height] = rgb2digi(Col, 2)
+}
+
+
+
+
+
+################
+# IMAGE STREAM #
+################
+
+
+
+Base64Charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+Base64CharIndex = 1
+Base64Stored = array()
+
+function number b64_next() {
+    
+    if(Base64Stored:count() == 0) {
+        
+        local N =
+            bShl(Base64Charset:find(Base64Stream[Base64CharIndex]) - 1, 18) +
+            bShl(Base64Charset:find(Base64Stream[Base64CharIndex + 1]) - 1, 12) +
+            bShl(Base64Charset:find(Base64Stream[Base64CharIndex + 2]) - 1, 6) +
+            (Base64Charset:find(Base64Stream[Base64CharIndex + 3]) - 1)
+        
+        
+        Base64Stored:pushNumber(bAnd(bShr(N, 16), 0xFF))
+        Base64Stored:pushNumber(bAnd(bShr(N, 8), 0xFF))
+        Base64Stored:pushNumber(bAnd(N, 0xFF))
+        
+        Base64CharIndex += 4
+        
+    }
+    
+    return Base64Stored:shiftNumber()
+    
+}
+
+
+
+
+
+#################
+# IMAGE FORMATS #
+#################
+
+
+
+Width = 0
+Height = 0
+X = 0
+Y = 0
+# 0 = NONE
+# 1 = RGB233
+# 2 = RGB565
+# 3 = YCbCr422
+# 4 = BC1
+# 5 = RGB888
+Format = 0
+
+function number incrementSingularPixel() {
+    X++
+    if(X >= Width) {
+        X = 0
+        Y++
+        if(Y >= Height) {
+            Y = 0
+            return 1
+        }
+    }
+    
+    return 0
+}
+
+function number incrementBlock(Size:number) {
+    X += Size
+    if(X >= Width) {
+        X = 0
+        Y += Size
+        if(Y >= Height) {
+            Y = 0
+            return 1
+        }
+    }
+    
+    return 0
+}
+
+
+
+
+
+function vector ycbcr_rgb(Y:number, Cb:number, Cr:number) {
+    # https://en.wikipedia.org/wiki/YCbCr#JPEG_conversion
+    # Usually clamping these is useless, But because we quantize to save bits
+    # we need to make sure these are clamped or else artifacts will appear.
+    return vec(
+        clamp(Y                         + 1.402    * (Cr - 128), 0, 255),
+        clamp(Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128), 0, 255),
+        clamp(Y + 1.772    * (Cb - 128)                        , 0, 255)
+    )
+}
+
+function number dequantize(Value:number, Bits:number) {
+    # TODO - Don't use if.
+    if(Bits == 5) {
+        return Value * 33 >> 2
+    } elseif(Bits == 6) {
+        return Value * 65 >> 4
+    } else {
+        error("dequantize: Can only quantize 5 & 6 bits.")
+    }
+}
+
+function vector decode565(Color:number) {
+    return vec(
+        dequantize(bShr(bAnd(Color, 0b1111100000000000), 11), 5),
+        dequantize(bShr(bAnd(Color, 0b0000011111100000), 5), 6),
+        dequantize(bAnd(Color, 0b0000000000011111), 5)
+    )
+}
+
+function vector lerp(A:vector, B:vector, T:number) {
+    return vec(
+        lerp(A:x(), B:x(), T),
+        lerp(A:y(), B:y(), T),
+        lerp(A:z(), B:z(), T)
+    )
+}
+
+function number nextPixels() {
+    
+    switch(Format) {
+        
+        case 1, # RGB233
+            local Color = b64_next()
+            Screen:dsSet(X, Y, vec(
+                bAnd(Color, 0b11000000),
+                bShl(bAnd(Color, 0b00111000), 2),
+                bShl(bAnd(Color, 0b00000111), 5)
+            ))
+            return incrementSingularPixel()
+        
+        case 2, # RGB565
+            local Color = bOr(b64_next(), bShl(b64_next(), 8))
+            Screen:dsSet(X, Y, decode565(Color))
+            return incrementSingularPixel()
+
+        case 3, # YCbCr655
+            local Color = bOr(b64_next(), bShl(b64_next(), 8))
+            Screen:dsSet(X, Y, ycbcr_rgb(
+                dequantize(bShr(bAnd(Color, 0b1111110000000000), 10), 6),
+                dequantize(bShr(bAnd(Color, 0b0000001111100000), 5), 5),
+                dequantize(bAnd(Color, 0b0000000000011111), 5)
+            ))
+            return incrementSingularPixel()
+            
+        case 4, # BC1
+            local Color1Value = bOr(b64_next(), bShl(b64_next(), 8))
+            local Color2Value = bOr(b64_next(), bShl(b64_next(), 8))
+            local Color1 = decode565(Color1Value)
+            local Color2 = decode565(Color2Value)
+            local Palette = (Color1Value > Color2Value) ? array(
+                Color1,
+                Color2,
+                lerp(Color1, Color2, 1 / 3),
+                lerp(Color1, Color2, 2 / 3)
+            ) : array(
+                Color1,
+                Color2,
+                lerp(Color1, Color2, 1 / 2),
+                vec(0, 0, 0)
+            )
+            
+            # TODO - When width is not multiple of 4, the image gets skewed.
+            for(Dy = 0, 3, 1) {
+                local BitmapRow = b64_next()
+                if(Y + Dy >= Height) { continue }
+                for(Dx = 0, 3, 1) {
+                    if(X + Dx >= Width) { continue }
+                    local P = bAnd(bShr(BitmapRow, Dx * 2), 0b11)
+                    Screen:dsSet(X + Dx, Y + Dy, Palette[P + 1, vector])
+                }
+            }
+        
+            return incrementBlock(4)
+        
+        case 5, # RGB888
+            Screen:dsSet(X, Y, vec(
+                b64_next(),
+                b64_next(),
+                b64_next()
+            ))
+            return incrementSingularPixel()
+        
+    }
+    
+}
+
+
+
+
+
+################
+# DISPLAY LOOP #
+################
+
+
+
+# State
+# 0 = Waiting for screen
+# 1 = Initialize
+# 2 = Displaying pixels
+# 3 = Terminate
+# 4 = Done
+
+# The start time
+Start = 0
+
+event tick() {
+    
+    switch(State) {
+        
+        case 0, break
+        
+        case 1,
+            Start = curtime()
+            Width = bOr(b64_next(), bShl(b64_next(), 8))
+            Height = bOr(b64_next(), bShl(b64_next(), 8))
+            Format = b64_next()
+            Screen:dsReset()
+            local FormatString = array(
+                "None",
+                "RGB223",
+                "RGB565",
+                "YCbCr",
+                "BC1",
+                "RGB888"
+            )[Format + 1, string]
+            print("E2 Image Display - Displaying image of size " + floor(Base64Stream:length() / 1024) + "KiB, with dimensions " + Width + "x" + Height + " size, with format " + FormatString + ".")
+            State = 2
+        break
+        
+        case 2,
+            for(_ = 0, Speed, 1) {
+                if(nextPixels()) {
+                    State = 3
+                    break
+                }
+            }
+        break
+        
+        case 3,
+            print("E2 Image Display - Done in " + round(curtime() - Start) + "s, you may now delete the e2 chip.")
+            State = 4
+        break
+            
+        case 4, break
+        
+    }
+    
+}
+
+
+
+
