@@ -21,4 +21,4 @@ jobs:
         with:
           TOOLCHAIN_VERSION: 1.72.0
           RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE e2"
+          EXTRA_FILES: "README.md LICENSE digital_screen_image_display.e2"
